@@ -1,0 +1,35 @@
+{
+  "name": "my-gallery",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Local photo gallery for the E:\\share\\image library",
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c cyan,magenta \"node server/index.mjs\" \"vite --config web/vite.config.ts\"",
+    "build": "vite build --config web/vite.config.ts",
+    "start": "node server/index.mjs",
+    "serve": "npm run build && node server/index.mjs"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "express": "^4.21.2",
+    "sharp": "^0.34.5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.2.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2"
+  }
+}
