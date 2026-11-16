@@ -19,6 +19,7 @@ export type LensItem = {
 
 export function Lightbox({
   items, index, onIndex, onClose, isSelected, onToggleSelect, autoplay = false, showReveal = true,
+  backdropPhotoId = null, onSetBackdrop,
 }: {
   items: LensItem[];
   index: number;
@@ -29,6 +30,10 @@ export function Lightbox({
   autoplay?: boolean;
   /** Explorer integration only makes sense on the machine running the server. */
   showReveal?: boolean;
+  /** Which photo is currently used as the site-wide background, if any. */
+  backdropPhotoId?: string | null;
+  /** Make this photo the site-wide background; the caller reports success. */
+  onSetBackdrop: (photoId: string) => Promise<void>;
 }) {
   const item = items[index];
   const toast = useToast();
@@ -39,6 +44,7 @@ export function Lightbox({
   const [origSrc, setOrigSrc] = useState<string | null>(null);
   const [origLoading, setOrigLoading] = useState(false);
   const [imgReady, setImgReady] = useState(false);
+  const [settingBg, setSettingBg] = useState(false);
   const stripRef = useRef<HTMLDivElement | null>(null);
   const activeThumbRef = useRef<HTMLButtonElement | null>(null);
 
@@ -55,6 +61,19 @@ export function Lightbox({
     },
     [index, items.length, onIndex],
   );
+
+  /** One click: use this photo as the background, with its album's own date/place. */
+  const applyBackdrop = useCallback(async () => {
+    if (!item || item.kind !== 'photo' || settingBg) return;
+    setSettingBg(true);
+    try {
+      await onSetBackdrop(item.id);
+    } catch {
+      /* the caller shows the error toast */
+    } finally {
+      setSettingBg(false);
+    }
+  }, [item, settingBg, onSetBackdrop]);
 
   // reset per-slide state
   useEffect(() => {
@@ -138,6 +157,8 @@ export function Lightbox({
       } else if (e.key === 'i' || e.key === 'I') setInfo((v) => !v);
       else if (e.key === 'o' || e.key === 'O') {
         if (item?.kind === 'photo') setOriginal((v) => !v);
+      } else if (e.key === 'b' || e.key === 'B') {
+        void applyBackdrop();
       } else if (e.key === ' ') {
         e.preventDefault();
         setPlaying((v) => !v);
@@ -145,7 +166,7 @@ export function Lightbox({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [go, onClose, onToggleSelect, item, zoom]);
+  }, [go, onClose, onToggleSelect, item, zoom, applyBackdrop]);
 
   // lock body scroll + centre the active filmstrip cell
   useEffect(() => {
@@ -203,6 +224,22 @@ export function Lightbox({
           >
             <Icon name="heart" filled={selected} />
           </button>
+          {!isVideo ? (
+            <button
+              className={`lb-btn text lb-bg${backdropPhotoId === item.id ? ' on' : ''}`}
+              onClick={() => void applyBackdrop()}
+              disabled={settingBg}
+              aria-pressed={backdropPhotoId === item.id}
+              title={backdropPhotoId === item.id ? '当前已是全站背景' : '设为全站背景 (B)'}
+            >
+              {settingBg ? (
+                <span className="spinner" style={{ width: 13, height: 13, borderWidth: 1.4 }} />
+              ) : (
+                <Icon name="image" className="icon sm" />
+              )}
+              <span className="lb-bg-label">{backdropPhotoId === item.id ? '当前背景' : '设为背景'}</span>
+            </button>
+          ) : null}
           {!isVideo ? (
             <button
               className={`lb-btn text${original ? ' on' : ''}`}
@@ -379,6 +416,11 @@ export function Lightbox({
           <span>
             <kbd>O</kbd> 原图
           </span>
+          {!isVideo ? (
+            <span>
+              <kbd>B</kbd> 背景
+            </span>
+          ) : null}
           <span>
             <kbd>I</kbd> 信息
           </span>
@@ -430,6 +472,21 @@ export function Lightbox({
           </div>
           <h4 style={{ marginTop: 26 }}>Actions</h4>
           <div style={{ display: 'grid', gap: 8 }}>
+            {!isVideo ? (
+              <button
+                className="btn"
+                onClick={() => void applyBackdrop()}
+                disabled={settingBg}
+                style={{ justifyContent: 'center' }}
+              >
+                {settingBg ? (
+                  <span className="spinner" style={{ width: 14, height: 14 }} />
+                ) : (
+                  <Icon name="image" className="icon sm" />
+                )}
+                {backdropPhotoId === item.id ? '当前已是全站背景' : '设为全站背景'}
+              </button>
+            ) : null}
             {!isVideo ? (
               <button
                 className="btn"

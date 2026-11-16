@@ -21,7 +21,7 @@ export default defineConfig({
     port: Number(process.env.WEB_PORT || 5173),
     strictPort: false,
     proxy: Object.fromEntries(
-      ['/api', '/thumb', '/blur', '/media', '/preview'].map((p) => [p, { target: API, changeOrigin: false }]),
+      ['/api', '/thumb', '/blur', '/media', '/preview', '/backdrop'].map((p) => [p, { target: API, changeOrigin: false }]),
     ),
   },
 });

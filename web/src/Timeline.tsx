@@ -188,13 +188,10 @@ function CollectionBlock({
 }
 
 export function Timeline({
-  library, onOpenAlbum, onOpenAll, onOpenFavorites, selectedCount, showSensitive, onToggleSensitive,
+  library, onOpenAlbum, showSensitive, onToggleSensitive,
 }: {
   library: LibraryPayload;
   onOpenAlbum: (id: string) => void;
-  onOpenAll: () => void;
-  onOpenFavorites: () => void;
-  selectedCount: number;
   showSensitive: boolean;
   onToggleSensitive: () => void;
 }) {
@@ -210,7 +207,7 @@ export function Timeline({
 
   return (
     <div className="wrap" id="timeline">
-      {years.map((y, yi) => {
+      {years.map((y) => {
         const top = (byParent.get(null) || [])
           .filter((r) => r.year === y.year)
           .filter(visible)
@@ -244,26 +241,6 @@ export function Timeline({
                 }
                 return <AlbumCard key={album.id} album={album} onOpen={onOpenAlbum} index={i} />;
               })}
-              {yi === 0 ? (
-                <Reveal className="collection" delay={120}>
-                  <div className="collection-head" style={{ marginBottom: 0, alignItems: 'center' }}>
-                    <div>
-                      <h3 className="collection-title">不想按故事看？</h3>
-                      <div className="collection-sub">按拍摄时间铺开全部照片，或者直接进收藏夹</div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button className="btn" onClick={onOpenAll}>
-                        <Icon name="layers" className="icon sm" />
-                        全部照片
-                      </button>
-                      <button className="btn solid" onClick={onOpenFavorites}>
-                        <Icon name="heart" className="icon sm" filled={selectedCount > 0} />
-                        收藏夹 {selectedCount > 0 ? selectedCount : ''}
-                      </button>
-                    </div>
-                  </div>
-                </Reveal>
-              ) : null}
             </div>
           </section>
         );

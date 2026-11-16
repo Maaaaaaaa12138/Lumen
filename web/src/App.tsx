@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, type LibraryPayload, type ThumbStats } from './api';
+import { api, type Backdrop as BackdropData, type LibraryPayload, type ThumbStats } from './api';
 import { AlbumView } from './Album';
+import { Backdrop, BackdropSheet } from './Backdrop';
 import { Hero } from './Hero';
 import { Lightbox, type LensItem } from './Lightbox';
 import { AllPhotosView, BootScreen, FavoritesView, SearchSheet } from './Overlays';
@@ -37,6 +38,10 @@ const EMPTY_THUMBS: ThumbStats = {
   total: 0, done: 0, failed: 0, pending: 0, active: 0, rate: 0, etaSec: null, bytes: 0, complete: true,
 };
 
+const EMPTY_BACKDROP: BackdropData = {
+  image: null, title: '', date: '', place: '', source: null, customized: false,
+};
+
 function Shell() {
   const [library, setLibrary] = useState<LibraryPayload | null>(null);
   const [booting, setBooting] = useState(true);
@@ -53,6 +58,8 @@ function Shell() {
   const [theme, setTheme] = useState<string>(() => localStorage.getItem('lumen-theme') || 'dark');
   const [scrolled, setScrolled] = useState(false);
   const [reindexing, setReindexing] = useState(false);
+  const [backdrop, setBackdrop] = useState<BackdropData | null>(null);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
   const toast = useToast();
   const firstLoad = useRef(true);
 
@@ -104,6 +111,28 @@ function Shell() {
       window.clearTimeout(timer);
     };
   }, [loadLibrary]);
+
+  /* -------------------------------------------------------------- backdrop */
+  const loadBackdrop = useCallback(async () => {
+    try {
+      setBackdrop(await api.backdrop());
+    } catch {
+      /* the gallery is usable without a background */
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadBackdrop();
+  }, [loadBackdrop]);
+
+  // While the index is still building the API has no auto pick yet, so look again.
+  useEffect(() => {
+    if (!booting) void loadBackdrop();
+  }, [booting, loadBackdrop]);
+
+  useEffect(() => {
+    if (library?.generatedAt) void loadBackdrop();
+  }, [library?.generatedAt, loadBackdrop]);
 
   /* --------------------------------------------------------------- stream */
   useEffect(() => {
@@ -251,6 +280,20 @@ function Shell() {
     });
   }, []);
 
+  /**
+   * Lightbox shortcut: make the photo on screen the site background, with the
+   * text derived from its own album rather than whatever was customised before.
+   */
+  const setPhotoBackdrop = useCallback(async (photoId: string) => {
+    try {
+      const next = await api.setBackdrop({ photoId, title: '', date: '', place: '' });
+      setBackdrop(next);
+      toast('已设为全站背景', 'image');
+    } catch (err) {
+      toast(String((err as Error).message || err), 'close');
+    }
+  }, [toast]);
+
   /* ---------------------------------------------------------------- views */
   const yearIds = useMemo(
     () => (library ? [...library.years].sort((a, b) => b.year - a.year).map((y) => `year-${y.year}`) : []),
@@ -266,7 +309,12 @@ function Shell() {
   const closeLightbox = useCallback(() => setLightbox(null), []);
 
   if (booting || !library) {
-    return <BootScreen progress={progress} thumbs={thumbs} error={error} />;
+    return (
+      <>
+        <Backdrop image={backdrop?.image ?? null} mode="boot" />
+        <BootScreen progress={progress} thumbs={thumbs} error={error} />
+      </>
+    );
   }
 
   const selectedCount = selections.size;
@@ -275,6 +323,7 @@ function Shell() {
 
   return (
     <>
+      <Backdrop image={backdrop?.image ?? null} mode={route.name === 'home' ? 'home' : 'page'} />
       <div className="grain" />
       {showThumbBar ? (
         <button
@@ -354,6 +403,15 @@ function Shell() {
             ) : null}
             <span className="dot" />
           </button>
+          <button
+            className="nav-link"
+            onClick={() => setCustomizeOpen(true)}
+            aria-label="更换首页背景"
+            title="更换首页背景"
+          >
+            <Icon name="image" className="icon sm" />
+            <span className="label">背景</span>
+          </button>
           <button className="nav-link" onClick={() => setSearchOpen(true)} aria-label="搜索">
             <Icon name="search" className="icon sm" />
           </button>
@@ -369,13 +427,10 @@ function Shell() {
 
       {route.name === 'home' ? (
         <main>
-          <Hero library={library} />
+          <Hero backdrop={backdrop} onCustomize={() => setCustomizeOpen(true)} />
           <Timeline
             library={library}
             onOpenAlbum={(id) => navigate(`#/album/${encodeURIComponent(id)}`)}
-            onOpenAll={() => navigate('#/all')}
-            onOpenFavorites={() => navigate('#/favorites')}
-            selectedCount={selectedCount}
             showSensitive={showSensitive}
             onToggleSensitive={toggleSensitive}
           />
@@ -454,6 +509,17 @@ function Shell() {
         />
       ) : null}
 
+      {customizeOpen ? (
+        <BackdropSheet
+          current={backdrop ?? EMPTY_BACKDROP}
+          onClose={() => setCustomizeOpen(false)}
+          onSaved={(next) => {
+            setBackdrop(next);
+            toast('背景已更新', 'image');
+          }}
+        />
+      ) : null}
+
       {lightbox ? (
         <Lightbox
           items={lightbox.items}
@@ -464,6 +530,8 @@ function Shell() {
           onClose={closeLightbox}
           isSelected={(id) => selections.has(id)}
           onToggleSelect={toggleSelect}
+          backdropPhotoId={backdrop?.source?.kind === 'photo' ? backdrop.source.photoId : null}
+          onSetBackdrop={setPhotoBackdrop}
         />
       ) : null}
     </>

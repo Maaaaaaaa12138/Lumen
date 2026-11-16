@@ -5,13 +5,19 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import express from 'express';
 import chokidar from 'chokidar';
+import sharp from 'sharp';
 import {
   LIBRARY_ROOT, PORT, HOST, WEB_DIST, SELECTION_FILE, THUMB_DIR,
   IMAGE_EXT, VIDEO_EXT, IGNORE_DIR_NAMES, IGNORED_ROOT_NAMES, CACHE_DIR, POSTER_DIR,
+  BACKDROP_DIR,
 } from './config.mjs';
 import { buildLibrary, summaryOf, detailOf, publicPhoto, resolveCovers, pickCovers } from './lib/library.mjs';
 import { ThumbService } from './lib/thumbs.mjs';
 import { decodeId, safeJoin, thumbKey } from './lib/util.mjs';
+import {
+  loadConfig as loadBackdropConfig, saveConfig as saveBackdropConfig, resolveBackdrop,
+  pickCandidates, storeUpload, pruneUploads, uploadFileFor, readUploadMeta,
+} from './lib/backdrop.mjs';
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -57,6 +63,105 @@ function saveSelections() {
       console.error('failed to persist selections', err);
     }
   }, 300);
+}
+
+// ---------------------------------------------------------------- backdrop --
+/** Resolving a backdrop can decode a large original for its LQIP, so keep it. */
+let backdropMemo = { key: null, value: null };
+const backdropInflight = new Map();
+const convertedViews = new Map();
+const fillViews = new Map();
+
+function backdropKey(config) {
+  return [
+    state.library?.generatedAt || 'none',
+    config.updatedAt || '',
+    config.source?.kind || 'auto',
+    config.source?.photoId || config.source?.token || '',
+    JSON.stringify(config.settings || {}),
+  ].join('|');
+}
+
+async function currentBackdrop() {
+  const config = loadBackdropConfig();
+  const key = backdropKey(config);
+  if (backdropMemo.key === key && backdropMemo.value) return backdropMemo.value;
+  const running = backdropInflight.get(key);
+  if (running) return running;
+  const promise = resolveBackdrop({ library: state.library, config, thumbs })
+    .then((value) => {
+      backdropMemo = { key, value };
+      return value;
+    })
+    .finally(() => backdropInflight.delete(key));
+  backdropInflight.set(key, promise);
+  return promise;
+}
+
+function invalidateBackdrop() {
+  backdropMemo = { key: null, value: null };
+}
+
+/** Never leak server paths to the browser. */
+function publicBackdrop(resolved) {
+  if (!resolved) {
+    return { image: null, title: '', date: '', place: '', source: null, customized: false };
+  }
+  return {
+    image: resolved.image,
+    title: resolved.title,
+    date: resolved.date,
+    place: resolved.place,
+    source: resolved.source,
+    customized: resolved.customized,
+  };
+}
+
+/** Formats a browser cannot paint (HEIC/TIFF) get one cached, high-quality copy. */
+async function ensureConvertedView(resolved) {
+  const file = path.join(BACKDROP_DIR, `view-${resolved.version}.webp`);
+  if (fs.existsSync(file)) return file;
+  const running = convertedViews.get(file);
+  if (running) return running;
+  const promise = (async () => {
+    const buf = await sharp(resolved.abs, { failOn: 'none', limitInputPixels: false })
+      .rotate()
+      .resize({ width: 2560, height: 2560, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 90, effort: 4 })
+      .toBuffer();
+    await fsp.mkdir(BACKDROP_DIR, { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    await fsp.writeFile(tmp, buf);
+    await fsp.rename(tmp, file);
+    return file;
+  })().finally(() => convertedViews.delete(file));
+  convertedViews.set(file, promise);
+  return promise;
+}
+
+/**
+ * The blurred underlay used around a contained photo. 720px is enough once it
+ * is blurred and sits behind the image, and it is generated only once.
+ */
+async function ensureFillView(resolved) {
+  const file = path.join(BACKDROP_DIR, `fill-${resolved.version}.webp`);
+  if (fs.existsSync(file)) return file;
+  const running = fillViews.get(file);
+  if (running) return running;
+  const promise = (async () => {
+    const buf = await sharp(resolved.abs, { failOn: 'none', limitInputPixels: false })
+      .rotate()
+      .resize({ width: 720, height: 720, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 55, effort: 3 })
+      .toBuffer();
+    await fsp.mkdir(BACKDROP_DIR, { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    await fsp.writeFile(tmp, buf);
+    await fsp.rename(tmp, file);
+    return file;
+  })().finally(() => fillViews.delete(file));
+  fillViews.set(file, promise);
+  return promise;
 }
 
 // ---------------------------------------------------------------- indexing --
@@ -309,6 +414,175 @@ app.get('/api/album', (req, res) => {
   const rec = lib.recordById.get(id);
   if (!rec) return res.status(404).json({ error: 'not found' });
   res.json({ album: detailOf(rec), thumbs: thumbs.stats() });
+});
+
+/* ------------------------------------------------------------- backdrop API */
+
+app.get('/api/backdrop', async (req, res) => {
+  try {
+    const resolved = await currentBackdrop();
+    res.set('Cache-Control', 'no-store');
+    res.json(publicBackdrop(resolved));
+  } catch (err) {
+    res.status(500).json({ error: String(err?.message || err) });
+  }
+});
+
+/** Wide photos from recent albums, for the "选择一张照片" grid. */
+app.get('/api/backdrop/candidates', (req, res) => {
+  if (!state.library) return res.status(202).json({ phase: state.phase, photos: [] });
+  res.set('Cache-Control', 'no-store');
+  res.json({ photos: pickCandidates(state.library, 120) });
+});
+
+/**
+ * Switch the background, or just edit the text shown on top of it.
+ * Everything is optional: { photoId } | { uploadToken } | { title, date, place }.
+ */
+app.post('/api/backdrop', async (req, res) => {
+  const body = req.body || {};
+  try {
+    if (body.reset) {
+      await saveBackdropConfig({ version: 1, source: null, settings: {} });
+      invalidateBackdrop();
+      await pruneUploads();
+      return res.json(publicBackdrop(await currentBackdrop()));
+    }
+
+    const current = loadBackdropConfig();
+    let source = current.source;
+    if (typeof body.photoId === 'string') {
+      if (!state.library?.photoIndex.has(body.photoId)) {
+        return res.status(404).json({ error: '这张照片不在照片库里了' });
+      }
+      source = { kind: 'photo', photoId: body.photoId };
+    } else if (typeof body.uploadToken === 'string') {
+      if (!readUploadMeta(body.uploadToken) || !uploadFileFor(body.uploadToken)) {
+        return res.status(400).json({ error: '上传已失效，请重新选择图片' });
+      }
+      source = { kind: 'upload', token: body.uploadToken };
+    }
+
+    const settings = { ...current.settings };
+    for (const key of ['title', 'date', 'place']) {
+      if (typeof body[key] !== 'string') continue;
+      const value = body[key].trim().slice(0, 80);
+      if (value) settings[key] = value;
+      else delete settings[key];
+    }
+
+    await saveBackdropConfig({ version: 1, source, settings });
+    invalidateBackdrop();
+    await pruneUploads(source?.kind === 'upload' ? source.token : null);
+    res.json(publicBackdrop(await currentBackdrop()));
+  } catch (err) {
+    res.status(500).json({ error: String(err?.message || err) });
+  }
+});
+
+/** Upload an original from the device (raw body, not multipart: no new deps). */
+app.post('/api/backdrop/upload', express.raw({ type: () => true, limit: '80mb' }), async (req, res) => {
+  try {
+    const info = await storeUpload(req.body, String(req.query.name || ''));
+    res.json(info);
+  } catch (err) {
+    res.status(400).json({ error: String(err?.message || err) });
+  }
+});
+
+/** The untouched original bytes (or one cached copy for formats browsers can't read). */
+app.get('/backdrop/orig', async (req, res) => {
+  let resolved;
+  try {
+    resolved = await currentBackdrop();
+  } catch {
+    return res.status(500).end();
+  }
+  if (!resolved?.abs || !fs.existsSync(resolved.abs)) return res.status(404).end();
+  // An immutable URL must not serve a different source if the backdrop changed
+  // while this request was in flight.
+  if (req.query.v && String(req.query.v) !== resolved.version) {
+    res.set('Cache-Control', 'no-store');
+    return res.status(404).end();
+  }
+
+  res.set('Cache-Control', 'public, max-age=31536000, immutable');
+  // A 30 MB original should win the disk over the thumbnail queue.
+  thumbs.pause();
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    thumbs.resume();
+  };
+  res.on('close', release);
+  res.on('finish', release);
+
+  try {
+    if (resolved.direct) {
+      res.type(mimeFor(resolved.abs));
+      const stream = fs.createReadStream(resolved.abs);
+      stream.on('error', release);
+      stream.pipe(res);
+      return;
+    }
+    const view = await ensureConvertedView(resolved);
+    res.type('image/webp');
+    const stream = fs.createReadStream(view);
+    stream.on('error', release);
+    stream.pipe(res);
+  } catch (err) {
+    release();
+    console.warn('[backdrop] failed to serve', String(err?.message || err).slice(0, 120));
+    res.status(500).end();
+  }
+});
+
+/** Preview an upload that has not been saved as the background yet. */
+app.get('/backdrop/upload/:token', (req, res) => {
+  const file = uploadFileFor(String(req.params.token || ''));
+  if (!file) return res.status(404).end();
+  res.set('Cache-Control', 'public, max-age=31536000, immutable');
+  res.type(mimeFor(file.abs));
+  fs.createReadStream(file.abs).pipe(res);
+});
+
+/** The soft blurred underlay around the contained photo. */
+app.get('/backdrop/fill', async (req, res) => {
+  let resolved;
+  try {
+    resolved = await currentBackdrop();
+  } catch {
+    return res.status(500).end();
+  }
+  if (!resolved?.abs) return res.status(404).end();
+  if (req.query.v && String(req.query.v) !== resolved.version) {
+    res.set('Cache-Control', 'no-store');
+    return res.status(404).end();
+  }
+
+  thumbs.pause();
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    thumbs.resume();
+  };
+  res.on('close', release);
+  res.on('finish', release);
+
+  try {
+    const file = await ensureFillView(resolved);
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.type('image/webp');
+    const stream = fs.createReadStream(file);
+    stream.on('error', release);
+    stream.pipe(res);
+  } catch (err) {
+    release();
+    console.warn('[backdrop] failed to build fill', String(err?.message || err).slice(0, 120));
+    res.status(500).end();
+  }
 });
 
 /** Flat chronological stream used by the "全部照片" view. */
@@ -618,7 +892,7 @@ app.get('/api/health', (req, res) => {
 // static frontend
 if (fs.existsSync(WEB_DIST)) {
   app.use(express.static(WEB_DIST, { index: false, maxAge: '1h' }));
-  app.get(/^\/(?!api|thumb|blur|media|preview).*/, (req, res) => {
+  app.get(/^\/(?!api|thumb|blur|media|preview|backdrop).*/, (req, res) => {
     res.sendFile(path.join(WEB_DIST, 'index.html'));
   });
 } else {
@@ -695,6 +969,13 @@ function printBanner() {
 
 async function main() {
   await thumbs.init();
+  // Clean up uploads that were previewed but never saved as the background.
+  try {
+    const config = loadBackdropConfig();
+    await pruneUploads(config.source?.kind === 'upload' ? config.source.token : null);
+  } catch {
+    /* cache housekeeping is best-effort */
+  }
   const server = app.listen(PORT, HOST, printBanner);
   server.on('error', (err) => {
     console.error('[server] listen failed', err);

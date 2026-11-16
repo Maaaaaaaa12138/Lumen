@@ -10,7 +10,7 @@ import path from 'node:path';
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const PORT = Number(process.env.CDP_PORT || 9333);
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:8787';
-const OUT_DIR = path.resolve('scripts/shots');
+const OUT_DIR = path.resolve(process.env.SHOT_DIR || 'scripts/shots');
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -131,14 +131,17 @@ await cdp.send('Emulation.setDeviceMetricsOverride', {
 
 const scenarios = {
   async home() {
-    await cdp.navigate(`${BASE}/#/`);
+    await cdp.navigate(`${BASE}/?shot=${Date.now()}#/`);
     await cdp.waitFor(`!!document.querySelector('.hero-title')`);
-    await sleep(4000);
+    await cdp.eval(`window.scrollTo(0, 0)`);
+    await sleep(4500);
     await cdp.shot(path.join(OUT_DIR, 'home-hero.png'));
   },
   async timeline() {
-    await cdp.navigate(`${BASE}/#/`);
+    await cdp.navigate(`${BASE}/?shot=${Date.now()}#/`);
     await cdp.waitFor(`!!document.querySelector('.album-card')`);
+    await cdp.eval(`window.scrollTo(0, 0)`);
+    await sleep(1000);
     await cdp.eval(`document.getElementById('timeline')?.scrollIntoView()`);
     await sleep(2500);
     await cdp.shot(path.join(OUT_DIR, 'home-timeline.png'));
@@ -270,10 +273,11 @@ const scenarios = {
         return o;
       };
       out.brand = pick('.brand-name', ['color', 'font-family']);
-      out.title = pick('.hero-title', ['background-image', 'color', '-webkit-text-fill-color']);
+      out.title = pick('.hero-title', ['background-image', 'color', '-webkit-text-fill-color', 'text-shadow']);
       out.scrim = pick('.hero-scrim', ['background-image']);
-      out.blurb = pick('.hero-blurb', ['color']);
-      out.statK = pick('.hero-stat .k', ['color']);
+      out.meta = pick('.hero-meta', ['color']);
+      out.cta = pick('.hero-btn.primary', ['background-color', 'color']);
+      out.veil = pick('.backdrop-veil', ['opacity', '--veil']);
       return out;
     })()`);
     console.log(JSON.stringify(dump, null, 2));
@@ -295,10 +299,11 @@ const scenarios = {
         vars: { bg: cs.getPropertyValue('--bg').trim(), ink: cs.getPropertyValue('--ink').trim() },
         body: { bg: body.backgroundColor, color: body.color },
         brand: pick('.brand-name', ['color']),
-        title: pick('.hero-title', ['background-image', '-webkit-text-fill-color']),
+        title: pick('.hero-title', ['background-image', '-webkit-text-fill-color', 'color', 'text-shadow']),
         scrim: pick('.hero-scrim', ['background-image']),
-        blurb: pick('.hero-blurb', ['color']),
-        statK: pick('.hero-stat .k', ['color']),
+        meta: pick('.hero-meta', ['color']),
+        cta: pick('.hero-btn.primary', ['background-color', 'color']),
+        veil: pick('.backdrop-veil', ['opacity', '--veil']),
       };
     })()`);
     console.log('--- after switching to light ---');
@@ -343,8 +348,9 @@ const scenarios = {
     await cdp.shot(path.join(OUT_DIR, 'backnav-restored.png'));
   },
   async lightHero() {
-    await cdp.navigate(`${BASE}/#/`);
+    await cdp.navigate(`${BASE}/?shot=${Date.now()}#/`);
     await cdp.waitFor(`!!document.querySelector('.hero-title')`);
+    await cdp.eval(`window.scrollTo(0, 0)`);
     await sleep(2500);
     await cdp.eval(`document.documentElement.dataset.theme='light'; localStorage.setItem('lumen-theme','light');`);
     await sleep(1500);
@@ -425,8 +431,10 @@ const scenarios = {
     await cdp.shot(path.join(OUT_DIR, 'lb-drawer.png'));
   },
   async light() {
-    await cdp.navigate(`${BASE}/#/`);
-    await sleep(2500);
+    await cdp.navigate(`${BASE}/?shot=${Date.now()}#/`);
+    await cdp.waitFor(`!!document.querySelector('.hero-title')`);
+    await cdp.eval(`window.scrollTo(0, 0)`);
+    await sleep(1500);
     await cdp.eval(`document.documentElement.dataset.theme='light'; localStorage.setItem('lumen-theme','light');`);
     await sleep(800);
     await cdp.eval(`document.getElementById('timeline')?.scrollIntoView()`);
@@ -436,7 +444,9 @@ const scenarios = {
   },
   async mobile() {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 430, height: 900, deviceScaleFactor: 2, mobile: true });
-    await cdp.navigate(`${BASE}/#/`);
+    await cdp.navigate(`${BASE}/?shot=${Date.now()}#/`);
+    await cdp.waitFor(`!!document.querySelector('.hero-title')`);
+    await cdp.eval(`window.scrollTo(0, 0)`);
     await sleep(3500);
     await cdp.shot(path.join(OUT_DIR, 'mobile-home.png'));
     await cdp.eval(`document.getElementById('timeline')?.scrollIntoView()`);
@@ -445,6 +455,43 @@ const scenarios = {
     await cdp.navigate(`${BASE}/#/album/${encodeURIComponent('2026/1101慕田峪')}`);
     await sleep(3000);
     await cdp.shot(path.join(OUT_DIR, 'mobile-album.png'));
+  },
+  async bgpicker() {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    await cdp.navigate(`${BASE}/?shot=${Date.now()}#/`);
+    await cdp.waitFor(`!!document.querySelector('.hero-title')`);
+    await sleep(1500);
+    await cdp.eval(`document.querySelector('.nav-link[aria-label="更换首页背景"]')?.click()`);
+    await cdp.waitFor(`!!document.querySelector('.bg-grid')`);
+    await sleep(2200);
+    await cdp.shot(path.join(OUT_DIR, 'bg-picker.png'));
+    await cdp.eval(`document.querySelector('.bg-sheet .sheet-close')?.click()`);
+  },
+  // Simulate a slow original: only the inline LQIP can paint.
+  async backdropLqip() {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    await cdp.send('Network.enable');
+    await cdp.send('Network.setBlockedURLs', { urls: ['*backdrop/orig*'] });
+    await cdp.navigate(`${BASE}/?shot=${Date.now()}#/`);
+    await cdp.waitFor(`!!document.querySelector('.hero-title')`);
+    await sleep(2500);
+    await cdp.shot(path.join(OUT_DIR, 'hero-lqip.png'));
+    await cdp.send('Network.setBlockedURLs', { urls: [] });
+  },
+  async setBackdrop() {
+    await cdp.navigate(`${BASE}/#/album/${encodeURIComponent(String(args.albumOut || '2024/2024清明天津游'))}`);
+    await cdp.waitFor(`!!document.querySelector('.masonry .tile')`);
+    await sleep(2500);
+    await cdp.eval(`document.querySelector('.masonry .tile')?.click()`);
+    await sleep(2500);
+    await cdp.shot(path.join(OUT_DIR, 'lb-bg-button.png'));
+    const before = await cdp.eval(`fetch('/api/backdrop').then(r => r.json()).then(b => b.source?.photoId || '')`, true);
+    await cdp.eval(`document.querySelector('.lb-bg')?.click()`);
+    await sleep(2500);
+    await cdp.shot(path.join(OUT_DIR, 'lb-bg-applied.png'));
+    const after = await cdp.eval(`fetch('/api/backdrop').then(r => r.json()).then(b => JSON.stringify({ photoId: b.source?.photoId, title: b.title, date: b.date }))`, true);
+    console.log('  backdrop before:', before);
+    console.log('  backdrop after :', after);
   },
 };
 

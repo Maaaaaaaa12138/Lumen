@@ -345,8 +345,14 @@ function commandWorks(command) {
         return resolve(false);
       }
     }
-    execFile('where', [command], { windowsHide: true }, (err, stdout) => {
-      resolve(!err && Boolean(stdout.trim()));
-    });
+    try {
+      execFile('where', [command], { windowsHide: true }, (err, stdout) => {
+        resolve(!err && Boolean(stdout.trim()));
+      });
+    } catch {
+      // A locked-down host can refuse to spawn a shell at all; that just means
+      // "ffmpeg is not available", not a fatal gallery error.
+      resolve(false);
+    }
   });
 }

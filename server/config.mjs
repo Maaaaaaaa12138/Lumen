@@ -17,6 +17,11 @@ export const SELECTION_FILE = path.join(CACHE_DIR, 'selections.json');
 export const INDEX_FILE = path.join(CACHE_DIR, 'library.json');
 export const POSTER_DIR = path.join(CACHE_DIR, 'posters');
 
+/** The full-page background image, its settings, and user uploads. */
+export const BACKDROP_FILE = path.join(CACHE_DIR, 'backdrop.json');
+export const BACKDROP_DIR = path.join(CACHE_DIR, 'backdrop');
+export const BACKDROP_UPLOAD_DIR = path.join(BACKDROP_DIR, 'uploads');
+
 export const WEB_DIST = path.join(PROJECT_ROOT, 'dist');
 
 /** HTTP server. Binds all interfaces so the gallery is reachable from a phone. */

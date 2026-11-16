@@ -97,6 +97,53 @@ export type LibraryPayload = {
   thumbs: ThumbStats;
 };
 
+/** The site-wide background image, its caption, and where it came from. */
+export type BackdropImage = {
+  url: string;
+  /** Small blurred copy used around the contained original. */
+  fill: string | null;
+  /** Inline 24px LQIP, painted before the original arrives. */
+  placeholder: string | null;
+  color: string | null;
+  width: number | null;
+  height: number | null;
+  bytes: number;
+};
+
+export type Backdrop = {
+  image: BackdropImage | null;
+  title: string;
+  date: string;
+  place: string;
+  source: { kind: 'photo' | 'upload' | 'auto'; photoId: string | null; albumId: string | null } | null;
+  customized: boolean;
+};
+
+export type BackdropCandidate = {
+  id: string;
+  thumb: string;
+  w: number | null;
+  h: number | null;
+  date: string;
+  bytes: number;
+  title: string;
+  place: string;
+  albumId: string;
+  albumTitle: string;
+  curated: boolean;
+};
+
+export type BackdropUpload = {
+  token: string;
+  url: string;
+  placeholder: string | null;
+  width: number;
+  height: number;
+  bytes: number;
+  name: string;
+  date: string;
+};
+
 export type StatusPayload = {
   phase: 'booting' | 'indexing' | 'ready' | 'error';
   progress: { phase: string; message?: string; done?: number; total?: number };
@@ -166,6 +213,38 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ paused }),
     }).then((r) => json<{ ok: boolean; paused: boolean; stats: ThumbStats }>(r)),
+
+  backdrop: () => fetch('/api/backdrop', { cache: 'no-store' }).then((r) => json<Backdrop>(r)),
+  backdropCandidates: () =>
+    fetch('/api/backdrop/candidates', { cache: 'no-store' }).then((r) =>
+      json<{ photos: BackdropCandidate[] }>(r)),
+  setBackdrop: (patch: {
+    photoId?: string;
+    uploadToken?: string;
+    title?: string;
+    date?: string;
+    place?: string;
+    reset?: boolean;
+  }) =>
+    fetch('/api/backdrop', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    }).then(async (r) => {
+      const body = (await r.json().catch(() => ({}))) as Backdrop & { error?: string };
+      if (!r.ok) throw new Error(body.error || `保存失败（${r.status}）`);
+      return body;
+    }),
+  uploadBackdrop: (file: File) =>
+    fetch(`/api/backdrop/upload?name=${encodeURIComponent(file.name)}`, {
+      method: 'POST',
+      headers: { 'content-type': file.type || 'application/octet-stream' },
+      body: file,
+    }).then(async (r) => {
+      const body = (await r.json().catch(() => ({}))) as BackdropUpload & { error?: string };
+      if (!r.ok) throw new Error(body.error || `上传失败（${r.status}）`);
+      return body;
+    }),
 };
 
 /** UTF-8 safe base64url, mirroring the server's decodeId(). */
