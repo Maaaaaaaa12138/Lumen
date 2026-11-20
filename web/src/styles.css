@@ -438,6 +438,60 @@ a {
   font-weight: 600;
 }
 
+/* “全部照片”页的筛选组合：年份 + 只看精选 */
+.all-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.curated-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  transition: all 0.25s var(--ease);
+}
+.curated-pill:hover {
+  color: var(--ink);
+  border-color: var(--line-2);
+}
+.curated-pill .c {
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: var(--surface-2);
+  color: var(--ink-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  transition: all 0.25s var(--ease);
+}
+.curated-pill.active {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-ink);
+  font-weight: 600;
+  box-shadow: 0 8px 20px -12px var(--accent);
+}
+.curated-pill.active:hover {
+  background: var(--accent-2);
+  color: var(--accent-ink);
+}
+.curated-pill.active .c {
+  background: rgba(24, 15, 4, 0.18);
+  color: var(--accent-ink);
+}
+
 @media (max-width: 1080px) {
   .year-pills,
   .brand-sub {
@@ -2250,6 +2304,21 @@ main {
   color: var(--ink-4);
   font-size: 12px;
   letter-spacing: 0.14em;
+}
+.load-retry {
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  transition: all 0.25s var(--ease);
+}
+.load-retry:hover {
+  color: var(--ink);
+  border-color: var(--line-2);
 }
 .spinner {
   width: 22px;

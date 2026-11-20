@@ -103,8 +103,11 @@ export function dateFromFilename(name) {
 export function normalizeStem(stem) {
   return String(stem)
     .replace(/\.(jpe?g|tiff?|png)$/i, '')
-    .replace(/[-_\s]*(编辑|已增强|降噪|色彩增强|导出|精修|去噪|锐化|final|edit|edited|topaz|denoise|sharpen|lightroom|acr).*$/i, '')
-    .replace(/[-_\s(（]+\d+[)）]?$/g, '')
+    .replace(/[-_\s]*(编辑|已增强|降噪|色彩增强|导出|精修|去噪|锐化|hdr|全景|拼接|合成|final|edit|edited|topaz|denoise|sharpen|lightroom|acr).*$/i, '')
+    // Copy suffixes are short (`name_1`, `name (2)`); camera sequences such as
+    // DSC_3790 are four digits and must stay intact, or every photo of a card
+    // collapses onto the same stem and inherits another photo's capture date.
+    .replace(/[-_\s(（]+\d{1,2}[)）]?$/g, '')
     .trim();
 }
 

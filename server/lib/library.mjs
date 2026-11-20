@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
 import {
-  META_CACHE_FILE, PROBE_CONCURRENCY, AUTO_CURATED_COUNT, INDEX_FILE,
+  META_CACHE_FILE, PROBE_CONCURRENCY, AUTO_RECOMMENDED_COUNT, INDEX_FILE,
 } from '../config.mjs';
 import { scanLibrary } from './scanner.mjs';
 import {
@@ -171,6 +171,22 @@ export async function buildLibrary(root, { onProgress = () => {} } = {}) {
     }
   }
 
+  // ---- copy-time-only files follow the album's capture window --------------
+  // A file with no EXIF and no date in its name only has its copy mtime; using
+  // it would drop a 2023 archive photo into whatever year it was copied.
+  // Albums with a trustworthy window (real captures or a folder date) lend that
+  // date to such files; mtime-only albums keep their own (possibly correct) times.
+  for (const rec of records) {
+    if (rec.dateTrust !== 'capture' && rec.dateTrust !== 'folder') continue;
+    const fallback = rec.folderDate || rec.startDate;
+    if (!fallback) continue;
+    for (const p of rec.photos) {
+      if (p.dateStrong) continue;
+      p.date = fallback;
+      p.dateSource = 'album';
+    }
+  }
+
   // ---- curated selection ---------------------------------------------------
   for (const rec of records) {
     resolveCurated(rec);
@@ -222,6 +238,7 @@ export async function buildLibrary(root, { onProgress = () => {} } = {}) {
     rec.photos.sort(byDate);
     rec.videos.sort(byDate);
     rec.curatedPhotos.sort(byDate);
+    rec.recommendedPhotos.sort(byDate);
   }
 
   // ---- summaries + covers --------------------------------------------------
@@ -262,6 +279,7 @@ export async function buildLibrary(root, { onProgress = () => {} } = {}) {
       collections: records.filter((r) => r.isCollection).length,
       photos: records.reduce((s, r) => s + r.photoCount, 0),
       curated: records.reduce((s, r) => s + r.curatedPhotos.length, 0),
+      recommended: records.reduce((s, r) => s + r.recommendedPhotos.length, 0),
       videos: records.reduce((s, r) => s + r.videoCount, 0),
       bytes: totalPhotoBytes + totalVideoBytes,
       photoBytes: totalPhotoBytes,
@@ -296,6 +314,12 @@ function resolveCurated(rec) {
   const curated = rec.photos.filter((p) => p.tier === 'curated');
   const std = rec.photos.filter((p) => p.tier !== 'curated');
 
+  // 精选 is only what was actually kept: out/ (and 官方返图/精修/精选/finals)
+  // plus anything under 精品放这里. Nothing is ever auto-promoted into it.
+  rec.curatedPhotos = curated;
+  rec.recommendedPhotos = [];
+  rec.recommendedOnly = false;
+
   if (curated.length) {
     // inherit capture time from the matching original when we can
     const byStem = new Map();
@@ -304,14 +328,13 @@ function resolveCurated(rec) {
       const hit = byStem.get(normalizeStem(p.name).toUpperCase());
       if (hit) p.date = hit.date;
     }
-    rec.curatedPhotos = curated;
-    rec.derivedCurated = false;
     return;
   }
 
+  // No kept files: show an evenly spread preview, clearly under 推荐 only.
   if (std.length) {
     const k = Math.min(
-      AUTO_CURATED_COUNT,
+      AUTO_RECOMMENDED_COUNT,
       Math.max(8, Math.round(Math.sqrt(std.length) * 1.25)),
       std.length,
     );
@@ -328,17 +351,17 @@ function resolveCurated(rec) {
         picked.push(std[idx]);
       }
     }
-    rec.curatedPhotos = picked;
-    rec.derivedCurated = true;
-    return;
+    rec.recommendedPhotos = picked;
+    rec.recommendedOnly = true;
   }
-
-  rec.curatedPhotos = [];
-  rec.derivedCurated = false;
 }
 
 export function pickCovers(rec) {
-  const pool = rec.curatedPhotos.length ? rec.curatedPhotos : rec.photos;
+  const pool = rec.curatedPhotos.length
+    ? rec.curatedPhotos
+    : rec.recommendedPhotos.length
+      ? rec.recommendedPhotos
+      : rec.photos;
   if (!pool.length) {
     return rec.videos.filter((v) => v.thumb).slice(0, 4).map((v) => v.rel);
   }
@@ -374,12 +397,15 @@ function buildFeatured(records) {
   // Passport / ID photos are part of the archive but should not greet you.
   const isIntimate = (r) => /证件照/.test(r.title || '') || /证件照/.test(r.folderName || '');
   const withCovers = records
-    .filter((r) => !r.isCollection && r.curatedPhotos.length > 0 && !isIntimate(r))
+    .filter((r) => !r.isCollection && (r.curatedPhotos.length > 0 || r.recommendedPhotos.length > 0) && !isIntimate(r))
     .sort((a, b) => (new Date(b.startDate || 0)) - (new Date(a.startDate || 0)));
   const ids = [];
   for (let round = 0; round < 3; round++) {
     for (const rec of withCovers) {
-      const p = rec.curatedPhotos[round * 2 + 1] || rec.curatedPhotos[round] || rec.curatedPhotos[0];
+      // The hero is imagery, not the 精选 archive: a 推荐 fallback keeps
+      // albums without curated files in the rotation.
+      const pool = rec.curatedPhotos.length ? rec.curatedPhotos : rec.recommendedPhotos;
+      const p = pool[round * 2 + 1] || pool[round] || pool[0];
       if (p && !ids.includes(p.rel)) ids.push(p.rel);
       if (ids.length >= 22) return ids;
     }
@@ -423,7 +449,8 @@ export function summaryOf(rec) {
     datePrecision: rec.datePrecision,
     photoCount: rec.photoCount,
     curatedCount: rec.curatedPhotos.length,
-    derivedCurated: rec.derivedCurated,
+    recommendedCount: rec.recommendedPhotos.length,
+    recommendedOnly: Boolean(rec.recommendedOnly),
     videoCount: rec.videoCount,
     childIds: rec.childIds,
     isCollection: rec.isCollection,
@@ -441,6 +468,7 @@ export function detailOf(rec) {
     ...summaryOf(rec),
     photos: rec.photos.map(publicPhoto),
     curated: rec.curatedPhotos.map((p) => p.rel),
+    recommended: rec.recommendedPhotos.map((p) => p.rel),
     videos: rec.videos.map(publicVideo),
   };
 }

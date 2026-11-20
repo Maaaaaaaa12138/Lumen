@@ -41,8 +41,8 @@ export const PROBE_CONCURRENCY = 24;
 
 /** Album nesting: year/<album> is depth 1, year/<album>/<album> is depth 2. */
 export const MAX_ALBUM_DEPTH = 2;
-/** Auto "精选" size when an album has no hand-edited out/ folder. */
-export const AUTO_CURATED_COUNT = 12;
+/** How many photos an album without curated files shows as a 推荐 preview. */
+export const AUTO_RECOMMENDED_COUNT = 12;
 
 export const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.webp', '.avif', '.heic', '.heif']);
 export const VIDEO_EXT = new Set(['.mp4', '.mov', '.m4v', '.avi', '.mkv', '.mts', '.m2ts']);

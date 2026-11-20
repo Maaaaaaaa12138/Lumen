@@ -38,8 +38,11 @@ export type AlbumSummary = {
   dateLabel: string;
   datePrecision: string;
   photoCount: number;
+  /** Real curated files only: out/ (官方返图/精修/精选/finals) and 精品放这里. */
   curatedCount: number;
-  derivedCurated: boolean;
+  /** Evenly spread preview for an album without curated files; never counted as 精选. */
+  recommendedCount: number;
+  recommendedOnly: boolean;
   videoCount: number;
   childIds: string[];
   isCollection: boolean;
@@ -53,7 +56,17 @@ export type AlbumSummary = {
 export type AlbumDetail = AlbumSummary & {
   photos: Photo[];
   curated: string[];
+  recommended: string[];
   videos: Video[];
+};
+
+export type PhotoPage = {
+  total: number;
+  offset: number;
+  limit: number;
+  photos: Photo[];
+  /** Plain and curated-only totals for the same year scope, for the filter pill. */
+  counts?: { all: number; curated: number };
 };
 
 export type Stats = {
@@ -61,6 +74,7 @@ export type Stats = {
   collections: number;
   photos: number;
   curated: number;
+  recommended: number;
   videos: number;
   bytes: number;
   photoBytes: number;
@@ -160,10 +174,10 @@ async function json<T>(res: Response): Promise<T> {
 export const api = {
   library: () => fetch('/api/library').then((r) => json<LibraryPayload>(r)),
   album: (id: string) => fetch(`/api/album?id=${encodeURIComponent(id)}`).then((r) => json<{ album: AlbumDetail }>(r)),
-  photos: (offset: number, limit: number, year?: number | null) =>
-    fetch(`/api/photos?offset=${offset}&limit=${limit}${year ? `&year=${year}` : ''}`).then((r) =>
-      json<{ total: number; offset: number; limit: number; photos: Photo[] }>(r),
-    ),
+  photos: (offset: number, limit: number, year?: number | null, curatedOnly = false) =>
+    fetch(
+      `/api/photos?offset=${offset}&limit=${limit}${year ? `&year=${year}` : ''}${curatedOnly ? '&curated=1' : ''}`,
+    ).then((r) => json<PhotoPage>(r)),
   search: (q: string) =>
     fetch(`/api/search?q=${encodeURIComponent(q)}`).then((r) => json<{ albums: AlbumSummary[]; photos: Photo[] }>(r)),
   resolve: (ids: string[]) =>

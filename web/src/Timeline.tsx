@@ -73,7 +73,12 @@ function AlbumCard({ album, onOpen, index }: { album: AlbumSummary; onOpen: (id:
             {album.curatedCount > 0 ? (
               <span className="chip accent">
                 <Icon name="sparkle" className="icon sm" />
-                {album.derivedCurated ? '推荐' : '精选'} {album.curatedCount}
+                精选 {album.curatedCount}
+              </span>
+            ) : album.recommendedCount > 0 ? (
+              <span className="chip">
+                <Icon name="sparkle" className="icon sm" />
+                推荐 {album.recommendedCount}
               </span>
             ) : null}
             {album.videoCount > 0 ? (
@@ -88,7 +93,7 @@ function AlbumCard({ album, onOpen, index }: { album: AlbumSummary; onOpen: (id:
             <span className="u">frames</span>
           </div>
           <span className="album-open">
-            查看 {album.curatedCount > 0 ? '精选' : '照片'}
+            查看 {album.curatedCount > 0 ? '精选' : album.recommendedCount > 0 ? '推荐' : '照片'}
             <Icon name="right" className="icon sm" />
           </span>
         </div>
@@ -103,6 +108,11 @@ function AlbumCard({ album, onOpen, index }: { album: AlbumSummary; onOpen: (id:
                 <>
                   <i className="dotsep" />
                   <span>{album.curatedCount} 张精选</span>
+                </>
+              ) : album.recommendedCount > 0 ? (
+                <>
+                  <i className="dotsep" />
+                  <span>{album.recommendedCount} 张推荐</span>
                 </>
               ) : null}
               {album.videoCount > 0 ? (
@@ -149,7 +159,11 @@ export function MiniCard({ album, onOpen }: { album: AlbumSummary; onOpen: (id: 
         </div>
         <div style={{ fontSize: 11.5, color: 'var(--ink-4)', display: 'flex', gap: 8 }}>
           <span className="num">{album.dateLabel || fmtDate(album.startDate)}</span>
-          {album.curatedCount > 0 ? <span>{album.curatedCount} 精选</span> : null}
+          {album.curatedCount > 0 ? (
+            <span>{album.curatedCount} 精选</span>
+          ) : album.recommendedCount > 0 ? (
+            <span>{album.recommendedCount} 推荐</span>
+          ) : null}
         </div>
       </div>
     </button>
@@ -217,13 +231,18 @@ export function Timeline({
         const all = library.records.filter((r) => r.year === y.year);
         const photos = all.reduce((s, r) => s + r.photoCount, 0);
         const curated = all.reduce((s, r) => s + r.curatedCount, 0);
+        const recommended = all.reduce((s, r) => s + r.recommendedCount, 0);
         const videos = all.reduce((s, r) => s + r.videoCount, 0);
         return (
           <section className="year-block" id={`year-${y.year}`} key={y.year}>
             <div className="year-head">
               <div className="year-num">{y.year}</div>
               <div className="year-meta">
-                <span className="t">{fmtInt(photos)} 张照片 · {fmtInt(curated)} 张精选</span>
+                <span className="t">
+                  {fmtInt(photos)} 张照片
+                  {curated > 0 ? ` · ${fmtInt(curated)} 张精选` : ''}
+                  {recommended > 0 ? ` · ${fmtInt(recommended)} 张推荐` : ''}
+                </span>
                 <span className="s">
                   {top.length} stories{videos ? ` · ${videos} clips` : ''}
                 </span>

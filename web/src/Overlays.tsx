@@ -188,38 +188,53 @@ export function AllPhotosView({
   onToggleSelect: (id: string) => void;
 }) {
   const [year, setYear] = useState<number | null>(null);
+  const [onlyCurated, setOnlyCurated] = useState(false);
   const [items, setItems] = useState<Photo[]>([]);
   const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState<{ all: number; curated: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+  const [failed, setFailed] = useState(false);
   const sentinel = useRef<HTMLDivElement | null>(null);
   const loadingRef = useRef(false);
+  /** Bumped on every filter change so in-flight pages from the old filter are dropped. */
+  const genRef = useRef(0);
   const PAGE = 150;
 
   const load = useCallback(
     async (offset: number, replace: boolean) => {
       if (loadingRef.current) return;
+      const gen = genRef.current;
       loadingRef.current = true;
       setLoading(true);
+      setFailed(false);
       try {
-        const res = await api.photos(offset, PAGE, year);
+        const res = await api.photos(offset, PAGE, year, onlyCurated);
+        if (gen !== genRef.current) return;
         setTotal(res.total);
+        if (res.counts) setCounts(res.counts);
         setItems((prev) => (replace ? res.photos : [...prev, ...res.photos]));
         setDone(offset + res.photos.length >= res.total);
+      } catch {
+        if (gen === genRef.current) setFailed(true);
       } finally {
-        loadingRef.current = false;
-        setLoading(false);
+        if (gen === genRef.current) {
+          loadingRef.current = false;
+          setLoading(false);
+        }
       }
     },
-    [year],
+    [year, onlyCurated],
   );
 
   useEffect(() => {
+    genRef.current += 1;
+    loadingRef.current = false;
     setItems([]);
     setTotal(0);
     setDone(false);
     void load(0, true);
-  }, [year, load]);
+  }, [load]);
 
   useEffect(() => {
     const el = sentinel.current;
@@ -249,6 +264,7 @@ export function AllPhotosView({
   }, [items]);
 
   let runningIndex = -1;
+  const empty = done && !loading && !failed && total === 0;
 
   return (
     <div className="wrap" style={{ paddingTop: 'calc(var(--nav-h) + 40px)' }}>
@@ -265,23 +281,56 @@ export function AllPhotosView({
               <span className="k">Order</span>
               最新在前
             </span>
+            {onlyCurated ? (
+              <span>
+                <span className="k">Filter</span>
+                只看精选
+              </span>
+            ) : null}
           </div>
         </div>
-        <div className="year-pills">
-          <button className={`year-pill${year === null ? ' active' : ''}`} onClick={() => setYear(null)}>
-            全部
-          </button>
-          {[...years].sort((a, b) => b.year - a.year).map((y) => (
-            <button
-              key={y.year}
-              className={`year-pill${year === y.year ? ' active' : ''}`}
-              onClick={() => setYear(y.year)}
-            >
-              {y.year}
+        <div className="all-filters">
+          <div className="year-pills">
+            <button className={`year-pill${year === null ? ' active' : ''}`} onClick={() => setYear(null)}>
+              全部
             </button>
-          ))}
+            {[...years].sort((a, b) => b.year - a.year).map((y) => (
+              <button
+                key={y.year}
+                className={`year-pill${year === y.year ? ' active' : ''}`}
+                onClick={() => setYear(y.year)}
+              >
+                {y.year}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className={`curated-pill${onlyCurated ? ' active' : ''}`}
+            aria-pressed={onlyCurated}
+            onClick={() => setOnlyCurated((v) => !v)}
+            title={onlyCurated ? '取消筛选，显示所有照片' : '只显示精选照片'}
+          >
+            <Icon name={onlyCurated ? 'check' : 'sparkle'} className="icon sm" />
+            只看精选
+            {counts ? <span className="c">{fmtInt(counts.curated)}</span> : null}
+          </button>
         </div>
       </div>
+
+      {empty ? (
+        <div className="empty">
+          <Icon name={onlyCurated ? 'sparkle' : 'image'} className="icon" />
+          <span className="big">{onlyCurated ? '这里还没有精选' : '还没有照片'}</span>
+          <p>
+            {onlyCurated
+              ? year
+                ? `${year} 年没有精选照片，切回「全部照片」看看完整的一组。`
+                : '照片库里还没有精选照片，去相册里挑几张吧。'
+              : '照片目录还是空的。'}
+          </p>
+        </div>
+      ) : null}
 
       {grouped.map((group) => (
         <section key={group.month}>
@@ -318,12 +367,20 @@ export function AllPhotosView({
       ))}
 
       <div ref={sentinel} className="load-more">
-        {loading ? (
+        {failed ? (
+          <button
+            type="button"
+            className="load-retry"
+            onClick={() => void load(items.length, items.length === 0)}
+          >
+            加载失败 · 点击重试
+          </button>
+        ) : loading ? (
           <>
             <span className="spinner" /> 加载中
           </>
-        ) : done ? (
-          <span>{total ? '到底了' : '这一年没有照片'}</span>
+        ) : done && total ? (
+          <span>到底了 · 共 {fmtInt(total)} 张</span>
         ) : null}
       </div>
     </div>

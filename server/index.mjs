@@ -589,10 +589,13 @@ app.get('/backdrop/fill', async (req, res) => {
 app.get('/api/photos', (req, res) => {
   const lib = state.library;
   if (!lib) return res.status(202).json({ phase: state.phase, progress: state.progress });
+  // The plain stream omits the out/ exports: every one duplicates a jpg/ frame.
+  // Collection records may still hold their own media (depth folding), so they
+  // are included too; skipping them silently dropped real photos like 卧龙堂.
   if (!lib.flatPhotos) {
     const flat = [];
     for (const rec of lib.records) {
-      if (rec.isCollection || rec.sensitive) continue;
+      if (rec.sensitive) continue;
       for (const p of rec.photos) {
         if (p.tier === 'curated') continue;
         flat.push({ p, recordId: rec.id });
@@ -601,18 +604,37 @@ app.get('/api/photos', (req, res) => {
     flat.sort((a, b) => new Date(b.p.date) - new Date(a.p.date));
     lib.flatPhotos = flat;
   }
+  // Only the files the user kept (out/, 官方返图/, 精品放这里, …); the automatic
+  // 推荐 previews are deliberately never part of the 精选 stream.
+  if (!lib.flatCurated) {
+    const flat = [];
+    for (const rec of lib.records) {
+      if (rec.sensitive) continue;
+      for (const p of rec.curatedPhotos) flat.push({ p, recordId: rec.id });
+    }
+    flat.sort((a, b) => new Date(b.p.date) - new Date(a.p.date));
+    lib.flatCurated = flat;
+  }
   const year = req.query.year ? Number(req.query.year) : null;
+  const curatedOnly = req.query.curated === '1' || req.query.curated === 'true';
   const offset = Math.max(0, Number(req.query.offset) || 0);
   const limit = Math.min(400, Math.max(1, Number(req.query.limit) || 120));
-  const pool = year
-    ? lib.flatPhotos.filter((x) => Number(x.p.date.slice(0, 4)) === year)
-    : lib.flatPhotos;
+  const inYear = (x) => !year || Number(x.p.date.slice(0, 4)) === year;
+  const allPool = year ? lib.flatPhotos.filter(inYear) : lib.flatPhotos;
+  const curatedPool = year ? lib.flatCurated.filter(inYear) : lib.flatCurated;
+  const pool = curatedOnly ? curatedPool : allPool;
 
   const page = pool.slice(offset, offset + limit).map(({ p, recordId }) => {
     const rec = lib.recordById.get(recordId);
     return { ...publicPhoto(p), albumId: recordId, albumTitle: rec?.title || '' };
   });
-  res.json({ total: pool.length, offset, limit, photos: page });
+  res.json({
+    total: pool.length,
+    offset,
+    limit,
+    photos: page,
+    counts: { all: allPool.length, curated: curatedPool.length },
+  });
 });
 
 app.get('/api/search', (req, res) => {

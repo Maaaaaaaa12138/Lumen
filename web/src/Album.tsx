@@ -8,7 +8,7 @@ import {
 import { MiniCard } from './Timeline';
 import { useVideoPosters } from './videoPoster';
 
-type Tab = 'curated' | 'all' | 'videos';
+type Tab = 'curated' | 'recommended' | 'all' | 'videos';
 
 function useMasonryColumns(min = 340, max = 5) {
   const [cols, setCols] = useState(3);
@@ -156,7 +156,15 @@ export function AlbumView({
       .then((res) => {
         if (!alive) return;
         setAlbum(res.album);
-        setTab(res.album.curated.length ? 'curated' : res.album.videoCount && !res.album.photoCount ? 'videos' : 'all');
+        setTab(
+          res.album.curated.length
+            ? 'curated'
+            : res.album.recommended?.length
+              ? 'recommended'
+              : res.album.videoCount && !res.album.photoCount
+                ? 'videos'
+                : 'all',
+        );
       })
       .catch((e) => alive && setError(String(e.message || e)));
     return () => {
@@ -170,6 +178,12 @@ export function AlbumView({
     return album.curated.map((pid) => byId.get(pid)).filter(Boolean) as Photo[];
   }, [album]);
 
+  const recommendedPhotos = useMemo(() => {
+    if (!album) return [] as Photo[];
+    const byId = new Map(album.photos.map((p) => [p.id, p]));
+    return (album.recommended || []).map((pid) => byId.get(pid)).filter(Boolean) as Photo[];
+  }, [album]);
+
   const plainPhotos = useMemo(() => (album ? album.photos.filter((p) => p.tier === 0) : []), [album]);
   const posters = useVideoPosters(album?.videos || []);
   const children = useMemo(
@@ -179,23 +193,25 @@ export function AlbumView({
     [allAlbums, id],
   );
 
-  // warm the first previews of the curated set so opening one is instant
+  const previewPhotos = curatedPhotos.length ? curatedPhotos : recommendedPhotos;
+
+  // warm the first previews of the featured set so opening one is instant
   useEffect(() => {
-    if (!curatedPhotos.length) return;
+    if (!previewPhotos.length) return;
     const t = window.setTimeout(() => {
-      for (const p of curatedPhotos.slice(0, 4)) prefetchPreview(p.id);
+      for (const p of previewPhotos.slice(0, 4)) prefetchPreview(p.id);
     }, 700);
     return () => window.clearTimeout(t);
-  }, [curatedPhotos]);
+  }, [previewPhotos]);
 
-  const tabPhotos = tab === 'curated' ? curatedPhotos : plainPhotos;
+  const tabPhotos = tab === 'curated' ? curatedPhotos : tab === 'recommended' ? recommendedPhotos : plainPhotos;
   const { count, sentinel, hasMore } = useChunk(tabPhotos.length, 150);
 
   const bucket = useMemo(() => {
-    if (tab !== 'curated') return [];
+    if (tab !== 'curated' && tab !== 'recommended') return [];
     const buckets: Photo[][] = Array.from({ length: cols }, () => []);
     const heights = new Array(cols).fill(0);
-    for (const p of curatedPhotos) {
+    for (const p of tabPhotos) {
       const ar = (p.w || 3) / (p.h || 2);
       let target = 0;
       for (let i = 1; i < cols; i++) if (heights[i] < heights[target]) target = i;
@@ -203,7 +219,7 @@ export function AlbumView({
       heights[target] += 1 / ar + 0.04;
     }
     return buckets;
-  }, [curatedPhotos, cols, tab]);
+  }, [tabPhotos, cols, tab]);
 
   if (error) {
     return (
@@ -238,12 +254,14 @@ export function AlbumView({
         (acc, c) => ({
           frames: acc.frames + c.photoCount + c.videoCount,
           curated: acc.curated + c.curatedCount,
+          recommended: acc.recommended + c.recommendedCount,
         }),
-        { frames: total, curated: curatedPhotos.length },
+        { frames: total, curated: curatedPhotos.length, recommended: recommendedPhotos.length },
       )
-    : { frames: total, curated: curatedPhotos.length };
+    : { frames: total, curated: curatedPhotos.length, recommended: recommendedPhotos.length };
   const tabs: { key: Tab; label: string; count: number }[] = [
-    { key: 'curated', label: album.derivedCurated ? '推荐' : '精选', count: curatedPhotos.length },
+    { key: 'curated', label: '精选', count: curatedPhotos.length },
+    { key: 'recommended', label: '推荐', count: recommendedPhotos.length },
     { key: 'all', label: '全部照片', count: plainPhotos.length },
     { key: 'videos', label: '视频', count: album.videos.length },
   ].filter((t) => t.count > 0) as { key: Tab; label: string; count: number }[];
@@ -251,6 +269,8 @@ export function AlbumView({
 
   const openCurated = (index: number) =>
     onOpenLightbox(curatedPhotos.map((p) => photoItem(p, title, album.id)), index);
+  const openRecommended = (index: number) =>
+    onOpenLightbox(recommendedPhotos.map((p) => photoItem(p, title, album.id)), index);
   const openAll = (index: number) =>
     onOpenLightbox(plainPhotos.map((p) => photoItem(p, title, album.id)), index);
   const openVideo = (index: number) =>
@@ -279,11 +299,18 @@ export function AlbumView({
                 <span className="k">Frames</span>
                 {fmtInt(aggregated.frames)}
               </span>
-              <span>
-                <span className="k">Selected</span>
-                {aggregated.curated}
-                {album.derivedCurated ? '（自动推荐）' : ''}
-              </span>
+              {aggregated.curated > 0 ? (
+                <span>
+                  <span className="k">Selected</span>
+                  {aggregated.curated}
+                </span>
+              ) : null}
+              {aggregated.recommended > 0 ? (
+                <span>
+                  <span className="k">Preview</span>
+                  {aggregated.recommended} 张推荐
+                </span>
+              ) : null}
               <span>
                 <span className="k">Size</span>
                 {fmtBytes(album.bytes)}
@@ -301,7 +328,12 @@ export function AlbumView({
               className="btn"
               onClick={() =>
                 onOpenLightbox(
-                  (curatedPhotos.length ? curatedPhotos : plainPhotos).map((p) => photoItem(p, title, album.id)),
+                  (curatedPhotos.length
+                    ? curatedPhotos
+                    : recommendedPhotos.length
+                      ? recommendedPhotos
+                      : plainPhotos
+                  ).map((p) => photoItem(p, title, album.id)),
                   0,
                   true,
                 )
@@ -372,27 +404,30 @@ export function AlbumView({
         ) : null}
       </div>
 
-      {tab === 'curated' ? (
-        curatedPhotos.length ? (
+      {tab === 'curated' || tab === 'recommended' ? (
+        (tab === 'curated' ? curatedPhotos : recommendedPhotos).length ? (
           <>
-            {album.derivedCurated ? (
+            {tab === 'recommended' ? (
               <p style={{ color: 'var(--ink-4)', fontSize: 12.5, margin: '0 0 18px', letterSpacing: '0.03em' }}>
-                这个相册没有单独的精修文件，以下是按时间均匀抽取的推荐片段 —— 切到「全部照片」查看完整一组。
+                这个相册没有 out/、官方返图之类的精修文件，以下是按时间均匀抽取的推荐片段，不计入精选 —— 切到「全部照片」查看完整一组。
               </p>
             ) : null}
             <div className="masonry" ref={setMasonryRef}>
               {bucket.map((col, ci) => (
                 <div className="masonry-col" key={ci}>
-                  {col.map((p) => (
-                    <PhotoTile
-                      key={p.id}
-                      photo={p}
-                      selected={selected.has(p.id)}
-                      index={curatedPhotos.indexOf(p)}
-                      onOpen={() => openCurated(curatedPhotos.indexOf(p))}
-                      onToggle={() => onToggleSelect(p.id)}
-                    />
-                  ))}
+                  {col.map((p) => {
+                    const index = tabPhotos.indexOf(p);
+                    return (
+                      <PhotoTile
+                        key={p.id}
+                        photo={p}
+                        selected={selected.has(p.id)}
+                        index={index}
+                        onOpen={() => (tab === 'curated' ? openCurated(index) : openRecommended(index))}
+                        onToggle={() => onToggleSelect(p.id)}
+                      />
+                    );
+                  })}
                 </div>
               ))}
             </div>
