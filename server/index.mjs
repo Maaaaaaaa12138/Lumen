@@ -889,22 +889,42 @@ app.post('/api/reveal', (req, res) => {
   const rel = typeof req.body?.id === 'string' ? req.body.id : null;
   const abs = rel ? safeJoin(LIBRARY_ROOT, rel) : null;
   if (!abs || !fs.existsSync(abs)) return res.status(404).json({ ok: false, error: '文件不存在' });
+  let stat;
   try {
-    const stat = fs.statSync(abs);
-    // /select, opens the parent with the file highlighted; a folder is opened directly.
-    // windowsVerbatimArguments keeps Explorer's odd /select,<path> syntax intact,
-    // including paths that contain spaces (e.g. "...\8寸\不带字\8cun .JPG").
-    const arg = stat.isDirectory() ? `"${abs}"` : `/select,"${abs}"`;
-    spawn('explorer.exe', [arg], {
+    stat = fs.statSync(abs);
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: String(err?.message || err) });
+  }
+  // /select, opens the parent with the file highlighted; a folder is opened directly.
+  // windowsVerbatimArguments keeps Explorer's odd /select,<path> syntax intact,
+  // including paths that contain spaces (e.g. "...\8寸\不带字\8cun .JPG").
+  //
+  // Do NOT pass `windowsHide` here. Node turns it into STARTUPINFO with
+  // STARTF_USESHOWWINDOW + SW_HIDE, and Explorer applies that flag to the window it
+  // creates: the folder really opens, but it stays hidden - the API reports success,
+  // the window even steals focus, and the user sees nothing at all.
+  const arg = stat.isDirectory() ? `"${abs}"` : `/select,"${abs}"`;
+  let child;
+  try {
+    child = spawn('explorer.exe', [arg], {
       detached: true,
       stdio: 'ignore',
-      windowsHide: true,
       windowsVerbatimArguments: true,
-    }).unref();
-    res.json({ ok: true });
+    });
   } catch (err) {
-    res.status(500).json({ ok: false, error: String(err?.message || err) });
+    return res.status(500).json({ ok: false, error: String(err?.message || err) });
   }
+  // Explorer exits with code 1 even when it opens the window, so the exit code says
+  // nothing; only a failure to start the process is worth reporting.
+  let replied = false;
+  const reply = (fn) => {
+    if (replied) return;
+    replied = true;
+    fn();
+  };
+  child.once('spawn', () => reply(() => res.json({ ok: true })));
+  child.once('error', (err) => reply(() => res.status(500).json({ ok: false, error: String(err?.message || err) })));
+  child.unref();
 });
 
 app.get('/api/health', (req, res) => {
